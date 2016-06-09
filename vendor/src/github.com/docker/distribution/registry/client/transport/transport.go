@@ -4,6 +4,8 @@ import (
 	"io"
 	"net/http"
 	"sync"
+
+	"github.com/Sirupsen/logrus"
 )
 
 // RequestModifier represents an object which will do an inplace
@@ -64,6 +66,20 @@ func (t *transport) RoundTrip(req *http.Request) (*http.Response, error) {
 		t.setModReq(req, nil)
 		return nil, err
 	}
+	if res.StatusCode == 401 {
+		// Some proxies expect browser-like behavior, with an Authorization
+		// header only sent in response to a server challenge. Try again,
+		// with cookies from the 401 response.
+		// See https://github.com/docker/docker/issues/22503
+		logrus.Debugf("Got status code %d from %s, retrying...", res.StatusCode, req2.URL.EscapedPath())
+		res.Body.Close()
+		res, err = t.base().RoundTrip(req2)
+		if err != nil {
+			t.setModReq(req, nil)
+			return nil, err
+		}
+	}
+
 	res.Body = &onEOFReader{
 		rc: res.Body,
 		fn: func() { t.setModReq(req, nil) },
